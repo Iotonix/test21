@@ -1,0 +1,85 @@
+import re
+from rest_framework.response import Response
+from rest_framework import views
+from rest_framework.parsers import FileUploadParser, MultiPartParser, FormParser
+from api.serializers import (
+    LanguageSerializer,
+    PlatformSerializer,
+    BaseSerializer,
+    TranslationSerializer,
+)
+from api.models.language import Language
+from api.models.platform import Platform
+from api.models.base import Base
+from api.models.uniquetext import UniqueText
+from api.models.base_text_set import BaseText
+from api.models.translation import Translation
+from django.db import connection, transaction
+from rest_framework.permissions import IsAuthenticated, AllowAny
+
+
+class ToolDownloadUnusedView(views.APIView):
+    # parser_classes = (FileUploadParser,)
+    # parser_classes = (MultiPartParser, FormParser)
+    permission_classes = [
+        IsAuthenticated,
+    ]
+
+    def get(self, request, format=None):
+        code = 200
+        print("Hello from Download Translation by KeyId:")
+        locale = request.query_params.get("lang")
+        platform_name = request.query_params.get("platform")
+        keyid = request.query_params.get("keyid")
+        try:
+            language = None
+            if locale is not None:
+                language = Language.objects.get(locale__iexact=locale)
+        except Language.DoesNotExist:
+            print("language Not Found")
+            return Response(status=500)
+        # print('we found the language: ', language.id)
+
+        try:
+            platform = None
+            if platform_name is not None:
+                platform = Platform.objects.get(name__iexact=platform_name)
+        except Platform.DoesNotExist:
+            print("platform Not Found")
+            return Response(status=500)
+        # print('we found the platform: ', platform.id)
+
+        cursor = connection.cursor()
+        #                              0   1         2        3          4               5                   6         7          8
+        sql_statement = (
+            "SELECT 1 AS id, pl.name, base.key, base.id, utext.id, utext.textlabel "
+            "FROM api_base base "
+            "INNER JOIN api_basetext btext ON base.id = btext.base_id "
+            "INNER JOIN api_uniquetext utext ON btext.uniquetext_id = utext.id "
+            "INNER JOIN api_platform pl ON pl.id = base.platform_id "
+            "WHERE pl.id = "
+            + str(platform.id)
+            + " and utext.id NOT IN ( SELECT uniquetext_id FROM api_translation);"
+        )
+
+        # print(sql_statement)
+        cursor.execute(sql_statement)
+        # result = Base.objects.raw(sql_statement)
+        result = cursor.fetchall()
+        data = []
+        for row in result:
+            # print(row)
+            obj = {
+                "p": row[1],
+                "key": row[2],
+                "kid": row[3],
+                "utid": row[4],
+                "label": row[5],
+                "lid": -1,
+                "tid": -1,
+                "t": "",
+            }
+            data.append(obj)
+        # print(data.count)
+        # return JsonResponse(data, json_dumps_params={'indent': 2})
+        return Response(data)
